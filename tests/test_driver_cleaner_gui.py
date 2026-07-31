@@ -14,6 +14,7 @@ mechanism without any actual thread races.
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import customtkinter as ctk
 import pytest
 
 from src.driver_cleaner_gui import DriverDeletionApp
@@ -102,6 +103,23 @@ class TestScanning:
         assert app._busy is True  # left busy by __init__'s neutralised start_scan
         _run_scan(app, NO_DUPLICATES_OUTPUT)
         assert app._busy is False
+
+    def test_reason_and_extra_fields_shown_inline_without_a_click(self, app):
+        _run_scan(app, SINGLE_DUPLICATE_OUTPUT)
+        dup = app.duplicates[0]
+
+        label_texts = {w.cget("text") for w in app._row_widgets if isinstance(w, ctk.CTkLabel)}
+
+        # The "why" text is readable directly in the table now.
+        assert dup["reason"] in label_texts
+        # Device Class, Date, and Signer are all rendered as columns too.
+        assert dup["class"] in label_texts
+        assert dup["date"] in label_texts
+        assert dup["signer"] in label_texts
+
+        # No clickable "Why?" affordance should exist anymore.
+        assert not any(isinstance(w, ctk.CTkButton) for w in app._row_widgets)
+        assert not hasattr(app, "show_reason")
 
 
 class TestApproveDeletionGuards:

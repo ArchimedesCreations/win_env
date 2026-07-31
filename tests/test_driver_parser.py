@@ -94,6 +94,12 @@ class TestGetInstalledOemDrivers:
         assert nvidia["version_str"] == "31.0.15.5123"
         assert nvidia["date"] == datetime(2024, 1, 10)
 
+    def test_parses_signer_name(self):
+        drivers = _mocked_drivers(NO_DUPLICATES_OUTPUT)
+        nvidia = next(d for d in drivers if d["published_name"] == "oem0.inf")
+
+        assert nvidia["signer"] == "Microsoft Windows Hardware Compatibility Publisher"
+
     def test_supports_legacy_driver_date_and_version_label(self):
         # Some Windows builds label this field "Driver Date and Version:"
         # instead of "Driver Version:" -- both must parse identically.
@@ -136,12 +142,13 @@ class TestFindDuplicateDrivers:
         dup = find_duplicate_drivers(drivers)[0]
 
         expected_keys = {
-            "target_inf", "original_name", "provider", "class", "version",
-            "date", "kept_version", "kept_inf", "reason",
+            "target_inf", "original_name", "provider", "class", "signer",
+            "version", "date", "kept_version", "kept_inf", "reason",
         }
         assert expected_keys.issubset(dup.keys())
         assert dup["kept_inf"] in dup["reason"]
         assert dup["kept_version"] in dup["reason"]
+        assert dup["signer"] == "Microsoft Windows Hardware Compatibility Publisher"
 
     def test_multiple_superseded_versions_of_same_hardware(self):
         drivers = _mocked_drivers(MULTIPLE_SUPERSEDED_OUTPUT)

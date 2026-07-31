@@ -11,7 +11,7 @@ from src.driver_parser import DeletionResult, find_duplicate_drivers, scan_drive
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
 ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
 
-_TABLE_COLUMNS = 5  # Select, INF, Provider, Version, Why?
+_TABLE_COLUMNS = 8  # Select, INF, Provider, Class, Date, Version, Signer, Reason
 
 
 class DriverDeletionApp(ctk.CTk):
@@ -20,7 +20,7 @@ class DriverDeletionApp(ctk.CTk):
 
         # Window settings
         self.title("Windows Driver Clean-up Utility")
-        self.geometry("900x600")
+        self.geometry("1280x650")
 
         # --- State ---
         self.duplicates: List[Dict[str, Any]] = []
@@ -48,8 +48,11 @@ class DriverDeletionApp(ctk.CTk):
         self.scrollable_frame.grid_columnconfigure(0, weight=0)  # Checkbox
         self.scrollable_frame.grid_columnconfigure(1, weight=1)  # INF Name
         self.scrollable_frame.grid_columnconfigure(2, weight=1)  # Provider
-        self.scrollable_frame.grid_columnconfigure(3, weight=1)  # Version
-        self.scrollable_frame.grid_columnconfigure(4, weight=0)  # Why Button
+        self.scrollable_frame.grid_columnconfigure(3, weight=1)  # Device Class
+        self.scrollable_frame.grid_columnconfigure(4, weight=0)  # Date
+        self.scrollable_frame.grid_columnconfigure(5, weight=0)  # Version
+        self.scrollable_frame.grid_columnconfigure(6, weight=1)  # Signer
+        self.scrollable_frame.grid_columnconfigure(7, weight=2)  # Reason (Why superseded)
 
         # 3. --- Buttons Area ---
         self.button_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -125,7 +128,11 @@ class DriverDeletionApp(ctk.CTk):
             ctk.CTkLabel(self.scrollable_frame, text="Select", font=("Arial", 12, "bold")),
             ctk.CTkLabel(self.scrollable_frame, text="Original INF", font=("Arial", 12, "bold")),
             ctk.CTkLabel(self.scrollable_frame, text="Provider", font=("Arial", 12, "bold")),
+            ctk.CTkLabel(self.scrollable_frame, text="Device Class", font=("Arial", 12, "bold")),
+            ctk.CTkLabel(self.scrollable_frame, text="Date", font=("Arial", 12, "bold")),
             ctk.CTkLabel(self.scrollable_frame, text="Version", font=("Arial", 12, "bold")),
+            ctk.CTkLabel(self.scrollable_frame, text="Signer", font=("Arial", 12, "bold")),
+            ctk.CTkLabel(self.scrollable_frame, text="Why Superseded", font=("Arial", 12, "bold")),
         ]
         for col, header in enumerate(headers):
             header.grid(row=0, column=col, padx=5, pady=5)
@@ -141,26 +148,23 @@ class DriverDeletionApp(ctk.CTk):
             cb = ctk.CTkCheckBox(self.scrollable_frame, text="", variable=var, width=20)
             cb.grid(row=row_num, column=0, padx=5, pady=5)
 
-            inf_label = ctk.CTkLabel(self.scrollable_frame, text=inf)
-            inf_label.grid(row=row_num, column=1, padx=5, pady=5, sticky="w")
+            # Reason is shown inline -- no click required to see why a
+            # package was flagged.
+            cells = [
+                inf,
+                dup.get("provider", "Unknown"),
+                dup.get("class", "Unknown"),
+                dup.get("date", "Unknown"),
+                dup.get("version", "Unknown"),
+                dup.get("signer", "Unknown"),
+                dup.get("reason", ""),
+            ]
+            for col, text in enumerate(cells, start=1):
+                label = ctk.CTkLabel(self.scrollable_frame, text=text)
+                label.grid(row=row_num, column=col, padx=5, pady=5, sticky="w")
+                self._row_widgets.append(label)
 
-            provider_label = ctk.CTkLabel(self.scrollable_frame, text=dup.get("provider", "Unknown"))
-            provider_label.grid(row=row_num, column=2, padx=5, pady=5, sticky="w")
-
-            version_label = ctk.CTkLabel(self.scrollable_frame, text=dup.get("version", "Unknown"))
-            version_label.grid(row=row_num, column=3, padx=5, pady=5, sticky="w")
-
-            why_btn = ctk.CTkButton(
-                self.scrollable_frame, text="Why?", width=60, height=20, fg_color="transparent", border_width=1,
-                command=lambda r=dup.get("reason", ""): self.show_reason(r),
-            )
-            why_btn.grid(row=row_num, column=4, padx=5, pady=5)
-
-            self._row_widgets.extend([cb, inf_label, provider_label, version_label, why_btn])
-
-    def show_reason(self, reason_text: str):
-        """Displays a popup explaining why this driver is considered a duplicate."""
-        messagebox.showinfo("Duplicate Analysis", reason_text)
+            self._row_widgets.append(cb)
 
     # ----------------------------------------------------------------
     # Deletion
