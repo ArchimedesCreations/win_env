@@ -6,6 +6,7 @@ identifying duplicate / superseded third-party (OEM) driver packages.
 import logging
 import re
 import subprocess
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,44 +24,102 @@ _DATE_FORMATS = ("%m/%d/%Y", "%m-%d-%Y", "%Y-%m-%d")
 _VERSION_PART_RE = re.compile(r"-?\d+")
 
 
-def get_installed_oem_drivers(timeout: float = PNPUTIL_TIMEOUT_SECONDS) -> List[Dict[str, Any]]:
-    """
-    Executes 'pnputil /enum-drivers' and parses the output into structured dictionaries.
+@dataclass
+class ScanResult:
+    """Outcome of a driver store scan: either drivers, or a reason it failed."""
+    drivers: List[Dict[str, Any]] = field(default_factory=list)
+    error: Optional[str] = None
 
-    Returns an empty list (rather than raising) whenever the scan cannot be
-    completed -- missing binary, insufficient permissions, timeout, or a
-    non-zero exit -- so callers (e.g. the GUI) can treat "no drivers found"
-    and "scan failed" uniformly and keep running.
+
+@dataclass
+class DeletionResult:
+    """Outcome of attempting to delete a single driver package."""
+    published_name: str
+    success: bool
+    message: str
+
+
+def _run_pnputil(args: List[str], timeout: float) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Runs `pnputil <args>` and returns (stdout, None) on success or
+    (None, error_message) on failure. Never raises -- every failure mode
+    pnputil/subprocess can produce is translated into a human-readable
+    error message instead.
     """
     try:
         result = subprocess.run(
-            ["pnputil", "/enum-drivers"],
+            ["pnputil", *args],
             capture_output=True,
             text=True,
             errors="replace",  # never crash on an undecodable byte from a localized console
             timeout=timeout,
             check=True,
         )
-        raw_output = result.stdout
+        return result.stdout, None
     except FileNotFoundError:
-        logger.error("'pnputil' not found. This utility must be run on Windows.")
-        return []
+        return None, "'pnputil' not found. This utility must be run on Windows."
     except PermissionError:
-        logger.error("Permission denied while launching 'pnputil'. Try running as Administrator.")
-        return []
+        return None, "Permission denied while launching 'pnputil'. Try running as Administrator."
     except subprocess.TimeoutExpired:
-        logger.error("'pnputil /enum-drivers' timed out after %s seconds.", timeout)
-        return []
+        return None, f"'pnputil' timed out after {timeout} seconds."
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or "").strip()
         detail = f": {stderr}" if stderr else ""
-        logger.error("'pnputil' exited with code %s%s", e.returncode, detail)
-        return []
+        return None, f"'pnputil' exited with code {e.returncode}{detail}"
     except OSError as e:
-        logger.error("Unexpected OS error while launching 'pnputil': %s", e)
-        return []
+        return None, f"Unexpected OS error while launching 'pnputil': {e}"
 
-    return _parse_pnputil_output(raw_output)
+
+def scan_driver_store(timeout: float = PNPUTIL_TIMEOUT_SECONDS) -> ScanResult:
+    """
+    Executes 'pnputil /enum-drivers' and parses the output into structured
+    dictionaries. Unlike `get_installed_oem_drivers`, failures are reported
+    via `ScanResult.error` rather than swallowed, so a caller (e.g. the GUI)
+    can tell "no drivers found" apart from "the scan itself failed" (e.g.
+    pnputil missing, or a permissions error) and surface that to the user.
+    """
+    raw_output, error = _run_pnputil(["/enum-drivers"], timeout)
+    if error:
+        logger.error(error)
+        return ScanResult(drivers=[], error=error)
+
+    return ScanResult(drivers=_parse_pnputil_output(raw_output), error=None)
+
+
+def get_installed_oem_drivers(timeout: float = PNPUTIL_TIMEOUT_SECONDS) -> List[Dict[str, Any]]:
+    """
+    Executes 'pnputil /enum-drivers' and parses the output into structured dictionaries.
+
+    Returns an empty list (rather than raising) whenever the scan cannot be
+    completed -- missing binary, insufficient permissions, timeout, or a
+    non-zero exit -- so callers that only care about the driver list (e.g.
+    the CLI entry point below) can treat "no drivers found" and "scan
+    failed" uniformly. Callers that need to tell those two cases apart
+    (e.g. the GUI) should use `scan_driver_store` instead.
+    """
+    return scan_driver_store(timeout).drivers
+
+
+def delete_driver(
+    published_name: str, force: bool = False, timeout: float = PNPUTIL_TIMEOUT_SECONDS
+) -> DeletionResult:
+    """
+    Deletes a single driver package via `pnputil /delete-driver <name> /uninstall`.
+    Requires administrator privileges on Windows. `force=True` adds `/force`,
+    which allows removal even if the package is still bound to hardware
+    (see README "Safety Considerations").
+    """
+    args = ["/delete-driver", published_name, "/uninstall"]
+    if force:
+        args.append("/force")
+
+    raw_output, error = _run_pnputil(args, timeout)
+    if error:
+        logger.error("Failed to delete %s: %s", published_name, error)
+        return DeletionResult(published_name=published_name, success=False, message=error)
+
+    message = (raw_output or "").strip() or "Driver package removed successfully."
+    return DeletionResult(published_name=published_name, success=True, message=message)
 
 
 def _parse_pnputil_output(raw_output: Optional[str]) -> List[Dict[str, Any]]:

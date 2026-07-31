@@ -9,7 +9,12 @@ import subprocess
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from src.driver_parser import find_duplicate_drivers, get_installed_oem_drivers
+from src.driver_parser import (
+    delete_driver,
+    find_duplicate_drivers,
+    get_installed_oem_drivers,
+    scan_driver_store,
+)
 from tests.mock_pnputil_output import (
     EMPTY_OUTPUT,
     LEGACY_DATE_AND_VERSION_LABEL_OUTPUT,
@@ -183,3 +188,100 @@ class TestFindDuplicateDrivers:
         # empty-string artifact that silently groups differently from a
         # driver where the field was absent entirely.
         assert blank_provider_drv.get("provider") is None
+
+
+# --------------------------------------------------------------------------
+# scan_driver_store: same scan as get_installed_oem_drivers, but reports
+# *why* it came back empty instead of swallowing the failure.
+# --------------------------------------------------------------------------
+
+class TestScanDriverStore:
+    def test_success_has_no_error_and_correct_drivers(self):
+        with patch("src.driver_parser.subprocess.run", return_value=_completed_process(NO_DUPLICATES_OUTPUT)):
+            result = scan_driver_store()
+
+        assert result.error is None
+        assert len(result.drivers) == 3
+
+    def test_pnputil_not_found_reports_error(self):
+        with patch("src.driver_parser.subprocess.run", side_effect=FileNotFoundError):
+            result = scan_driver_store()
+
+        assert result.drivers == []
+        assert result.error is not None
+        assert "not found" in result.error.lower()
+
+    def test_permission_denied_reports_error(self):
+        with patch("src.driver_parser.subprocess.run", side_effect=PermissionError):
+            result = scan_driver_store()
+
+        assert result.drivers == []
+        assert "permission" in result.error.lower()
+
+    def test_timeout_reports_error(self):
+        timeout_error = subprocess.TimeoutExpired(cmd="pnputil", timeout=30)
+        with patch("src.driver_parser.subprocess.run", side_effect=timeout_error):
+            result = scan_driver_store()
+
+        assert result.drivers == []
+        assert "timed out" in result.error.lower()
+
+    def test_nonzero_exit_reports_stderr_in_error(self):
+        error = subprocess.CalledProcessError(returncode=1, cmd="pnputil", stderr="Access is denied.")
+        with patch("src.driver_parser.subprocess.run", side_effect=error):
+            result = scan_driver_store()
+
+        assert result.drivers == []
+        assert "Access is denied." in result.error
+
+
+# --------------------------------------------------------------------------
+# delete_driver: `pnputil /delete-driver <name> /uninstall`
+# --------------------------------------------------------------------------
+
+class TestDeleteDriver:
+    def test_success_returns_success_result(self):
+        with patch("src.driver_parser.subprocess.run", return_value=_completed_process("Driver package deleted successfully.")):
+            result = delete_driver("oem3.inf")
+
+        assert result.success is True
+        assert result.published_name == "oem3.inf"
+        assert "deleted successfully" in result.message.lower()
+
+    def test_permission_denied_returns_failure_result(self):
+        error = subprocess.CalledProcessError(returncode=1, cmd="pnputil", stderr="Access is denied.")
+        with patch("src.driver_parser.subprocess.run", side_effect=error):
+            result = delete_driver("oem3.inf")
+
+        assert result.success is False
+        assert result.published_name == "oem3.inf"
+        assert "Access is denied." in result.message
+
+    def test_pnputil_not_found_returns_failure_result(self):
+        with patch("src.driver_parser.subprocess.run", side_effect=FileNotFoundError):
+            result = delete_driver("oem3.inf")
+
+        assert result.success is False
+        assert "not found" in result.message.lower()
+
+    def test_timeout_returns_failure_result(self):
+        timeout_error = subprocess.TimeoutExpired(cmd="pnputil", timeout=30)
+        with patch("src.driver_parser.subprocess.run", side_effect=timeout_error):
+            result = delete_driver("oem3.inf")
+
+        assert result.success is False
+        assert "timed out" in result.message.lower()
+
+    def test_builds_expected_command_without_force(self):
+        with patch("src.driver_parser.subprocess.run", return_value=_completed_process("OK")) as mock_run:
+            delete_driver("oem3.inf")
+
+        args = mock_run.call_args[0][0]
+        assert args == ["pnputil", "/delete-driver", "oem3.inf", "/uninstall"]
+
+    def test_force_flag_appends_force_argument(self):
+        with patch("src.driver_parser.subprocess.run", return_value=_completed_process("OK")) as mock_run:
+            delete_driver("oem3.inf", force=True)
+
+        args = mock_run.call_args[0][0]
+        assert args == ["pnputil", "/delete-driver", "oem3.inf", "/uninstall", "/force"]
