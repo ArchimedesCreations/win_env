@@ -175,6 +175,8 @@ def _parse_driver_block(block: str) -> Dict[str, Any]:
             driver_info["provider"] = val
         elif "class name" in key:
             driver_info["class"] = val
+        elif "class guid" in key:
+            driver_info["class_guid"] = val
         elif "signer name" in key:
             driver_info["signer"] = val
         elif "driver" in key and "version" in key:
@@ -265,6 +267,7 @@ def find_duplicate_drivers(drivers: List[Dict[str, Any]]) -> List[Dict[str, Any]
                 "original_name": superseded.get("original_name", "N/A"),
                 "provider": superseded.get("provider", "Unknown"),
                 "class": superseded.get("class", "Unknown"),
+                "class_guid": superseded.get("class_guid", "Unknown"),
                 "signer": superseded.get("signer", "Unknown"),
                 "version": superseded.get("version_str", "Unknown"),
                 "date": superseded.get("date_str", "Unknown"),

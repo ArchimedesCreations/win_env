@@ -112,8 +112,9 @@ class TestScanning:
 
         # The "why" text is readable directly in the table now.
         assert dup["reason"] in label_texts
-        # Device Class, Date, and Signer are all rendered as columns too.
+        # Device Class, Class GUID, Date, and Signer are all rendered as columns too.
         assert dup["class"] in label_texts
+        assert dup["class_guid"] in label_texts
         assert dup["date"] in label_texts
         assert dup["signer"] in label_texts
 

@@ -11,7 +11,7 @@ from src.driver_parser import DeletionResult, find_duplicate_drivers, scan_drive
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
 ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
 
-_TABLE_COLUMNS = 8  # Select, INF, Provider, Class, Date, Version, Signer, Reason
+_TABLE_COLUMNS = 9  # Select, INF, Provider, Class, Class GUID, Date, Version, Signer, Reason
 
 
 class DriverDeletionApp(ctk.CTk):
@@ -20,7 +20,7 @@ class DriverDeletionApp(ctk.CTk):
 
         # Window settings
         self.title("Windows Driver Clean-up Utility")
-        self.geometry("1280x650")
+        self.geometry("1450x650")
 
         # --- State ---
         self.duplicates: List[Dict[str, Any]] = []
@@ -49,10 +49,11 @@ class DriverDeletionApp(ctk.CTk):
         self.scrollable_frame.grid_columnconfigure(1, weight=1)  # INF Name
         self.scrollable_frame.grid_columnconfigure(2, weight=1)  # Provider
         self.scrollable_frame.grid_columnconfigure(3, weight=1)  # Device Class
-        self.scrollable_frame.grid_columnconfigure(4, weight=0)  # Date
-        self.scrollable_frame.grid_columnconfigure(5, weight=0)  # Version
-        self.scrollable_frame.grid_columnconfigure(6, weight=1)  # Signer
-        self.scrollable_frame.grid_columnconfigure(7, weight=2)  # Reason (Why superseded)
+        self.scrollable_frame.grid_columnconfigure(4, weight=1)  # Class GUID
+        self.scrollable_frame.grid_columnconfigure(5, weight=0)  # Date
+        self.scrollable_frame.grid_columnconfigure(6, weight=0)  # Version
+        self.scrollable_frame.grid_columnconfigure(7, weight=1)  # Signer
+        self.scrollable_frame.grid_columnconfigure(8, weight=2)  # Reason (Why superseded)
 
         # 3. --- Buttons Area ---
         self.button_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -129,6 +130,7 @@ class DriverDeletionApp(ctk.CTk):
             ctk.CTkLabel(self.scrollable_frame, text="Original INF", font=("Arial", 12, "bold")),
             ctk.CTkLabel(self.scrollable_frame, text="Provider", font=("Arial", 12, "bold")),
             ctk.CTkLabel(self.scrollable_frame, text="Device Class", font=("Arial", 12, "bold")),
+            ctk.CTkLabel(self.scrollable_frame, text="Class GUID", font=("Arial", 12, "bold")),
             ctk.CTkLabel(self.scrollable_frame, text="Date", font=("Arial", 12, "bold")),
             ctk.CTkLabel(self.scrollable_frame, text="Version", font=("Arial", 12, "bold")),
             ctk.CTkLabel(self.scrollable_frame, text="Signer", font=("Arial", 12, "bold")),
@@ -154,6 +156,7 @@ class DriverDeletionApp(ctk.CTk):
                 inf,
                 dup.get("provider", "Unknown"),
                 dup.get("class", "Unknown"),
+                dup.get("class_guid", "Unknown"),
                 dup.get("date", "Unknown"),
                 dup.get("version", "Unknown"),
                 dup.get("signer", "Unknown"),
