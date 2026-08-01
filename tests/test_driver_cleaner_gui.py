@@ -40,10 +40,10 @@ def _run_target_synchronously(target=None, args=(), **kwargs):
     return thread
 
 
-def _run_scan(app: DriverDeletionApp, stdout: str):
+def _run_scan(app: DriverDeletionApp, stdout: str, show_all: bool = False):
     """Drives a full scan synchronously against mocked pnputil stdout."""
     with patch("src.driver_parser.subprocess.run", return_value=_completed_process(stdout)):
-        app._scan_worker()
+        app._scan_worker(show_all)
     app.update()
 
 
@@ -66,15 +66,27 @@ class TestScanning:
     def test_populates_checkbox_rows_for_each_duplicate(self, app):
         _run_scan(app, MULTIPLE_SUPERSEDED_OUTPUT)
 
-        assert len(app.duplicates) == 3
+        # 2 groups: NVIDIA (1 kept + 2 superseded) and Realtek (1 kept + 1 superseded).
+        assert len(app.rows) == 5
         assert set(app.checkbox_vars.keys()) == {"oem5.inf", "oem6.inf", "oem8.inf"}
         # Default-checked: every real BooleanVar should read back True.
         assert all(var.get() for var in app.checkbox_vars.values())
 
+    def test_kept_driver_row_is_above_its_superseded_rows_and_not_selectable(self, app):
+        _run_scan(app, SINGLE_DUPLICATE_OUTPUT)
+
+        assert [r["target_inf"] for r in app.rows] == ["oem4.inf", "oem3.inf"]
+        assert app.rows[0]["is_kept"] is True
+        assert app.rows[1]["is_kept"] is False
+
+        # The kept driver (oem4) must never be offered up for deletion.
+        assert "oem4.inf" not in app.checkbox_vars
+        assert "oem3.inf" in app.checkbox_vars
+
     def test_no_duplicates_renders_empty_state_not_rows(self, app):
         _run_scan(app, NO_DUPLICATES_OUTPUT)
 
-        assert app.duplicates == []
+        assert app.rows == []
         assert app.checkbox_vars == {}
         # A single label for the empty-state message, no checkbox rows.
         assert len(app._row_widgets) == 1
@@ -82,7 +94,7 @@ class TestScanning:
     def test_scan_failure_shows_error_with_real_reason_and_empty_state(self, app):
         with patch("src.driver_parser.subprocess.run", side_effect=FileNotFoundError), \
              patch("src.driver_cleaner_gui.messagebox.showerror") as mock_showerror:
-            app._scan_worker()
+            app._scan_worker(False)
             app.update()
 
         assert app.checkbox_vars == {}
@@ -106,7 +118,7 @@ class TestScanning:
 
     def test_reason_and_extra_fields_shown_inline_without_a_click(self, app):
         _run_scan(app, SINGLE_DUPLICATE_OUTPUT)
-        dup = app.duplicates[0]
+        dup = next(r for r in app.rows if not r["is_kept"])
 
         label_texts = {w.cget("text") for w in app._row_widgets if isinstance(w, ctk.CTkLabel)}
 
@@ -121,6 +133,38 @@ class TestScanning:
         # No clickable "Why?" affordance should exist anymore.
         assert not any(isinstance(w, ctk.CTkButton) for w in app._row_widgets)
         assert not hasattr(app, "show_reason")
+
+
+class TestShowAllDriversToggle:
+    def test_default_view_omits_drivers_with_no_duplicates(self, app):
+        _run_scan(app, NO_DUPLICATES_OUTPUT, show_all=False)
+        assert app.rows == []
+
+    def test_show_all_lists_every_driver_even_without_duplicates(self, app):
+        _run_scan(app, NO_DUPLICATES_OUTPUT, show_all=True)
+
+        assert len(app.rows) == 3
+        assert all(r["is_kept"] for r in app.rows)
+        # None of them are deletable -- nothing superseded them.
+        assert app.checkbox_vars == {}
+
+    def test_show_all_still_marks_superseded_drivers_selectable(self, app):
+        _run_scan(app, MULTIPLE_SUPERSEDED_OUTPUT, show_all=True)
+
+        assert set(app.checkbox_vars.keys()) == {"oem5.inf", "oem6.inf", "oem8.inf"}
+
+    def test_toggle_switch_command_triggers_a_rescan(self, app):
+        with patch.object(app, "start_scan") as mock_start_scan:
+            app.show_all_var.set(True)
+            app._on_toggle_show_all()
+
+        mock_start_scan.assert_called_once()
+
+    def test_toggle_disabled_while_busy(self, app):
+        app._set_busy(True)
+        assert str(app.show_all_switch.cget("state")) == "disabled"
+        app._set_busy(False)
+        assert str(app.show_all_switch.cget("state")) == "normal"
 
 
 class TestApproveDeletionGuards:

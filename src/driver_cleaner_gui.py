@@ -5,13 +5,14 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from src.driver_actions import build_deletion_summary, delete_selected_drivers, get_selected_infs
-from src.driver_parser import DeletionResult, find_duplicate_drivers, scan_driver_store
+from src.driver_parser import DeletionResult, build_driver_rows, scan_driver_store
 
 # --- Configuration ---
 ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
 ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
 
 _TABLE_COLUMNS = 9  # Select, INF, Provider, Class, Class GUID, Date, Version, Signer, Reason
+_KEPT_ROW_FONT = ("Arial", 12, "bold")
 
 
 class DriverDeletionApp(ctk.CTk):
@@ -20,29 +21,40 @@ class DriverDeletionApp(ctk.CTk):
 
         # Window settings
         self.title("Windows Driver Clean-up Utility")
-        self.geometry("1450x650")
+        self.geometry("1450x680")
 
         # --- State ---
-        self.duplicates: List[Dict[str, Any]] = []
+        self.rows: List[Dict[str, Any]] = []
         self.checkbox_vars: Dict[str, ctk.BooleanVar] = {}
         self._row_widgets: List[Any] = []  # widgets currently in the table/empty-state, for teardown on refresh
         self._busy = False  # guards against overlapping scan/delete operations
+        self.show_all_var = ctk.BooleanVar(value=False)
 
         # 1. --- UI Layout ---
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)  # The table area should expand
+        self.grid_rowconfigure(2, weight=1)  # The table area should expand
 
         # Header Label
         self.header_label = ctk.CTkLabel(self, text="Superseded Drivers Proposed for Deletion", font=("Arial", 20, "bold"))
-        self.header_label.grid(row=0, column=0, pady=(20, 10), padx=20, sticky="w")
+        self.header_label.grid(row=0, column=0, pady=(20, 5), padx=20, sticky="w")
 
         # Transient status text ("Scanning...", "Deleting...") shown alongside the header.
         self.status_label = ctk.CTkLabel(self, text="", text_color="gray")
-        self.status_label.grid(row=0, column=0, pady=(20, 10), padx=20, sticky="e")
+        self.status_label.grid(row=0, column=0, pady=(20, 5), padx=20, sticky="e")
+
+        # Toolbar: toggle between "duplicates only" and "every installed driver".
+        self.toolbar_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.toolbar_frame.grid(row=1, column=0, padx=20, pady=(0, 10), sticky="w")
+
+        self.show_all_switch = ctk.CTkSwitch(
+            self.toolbar_frame, text="Show all drivers (not just duplicates)",
+            variable=self.show_all_var, command=self._on_toggle_show_all,
+        )
+        self.show_all_switch.grid(row=0, column=0)
 
         # 2. --- Scrollable Table Area ---
         self.scrollable_frame = ctk.CTkScrollableFrame(self, label_text="Duplicate Driver Packages")
-        self.scrollable_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
+        self.scrollable_frame.grid(row=2, column=0, padx=20, pady=10, sticky="nsew")
 
         # Configure the table columns grid
         self.scrollable_frame.grid_columnconfigure(0, weight=0)  # Checkbox
@@ -53,11 +65,11 @@ class DriverDeletionApp(ctk.CTk):
         self.scrollable_frame.grid_columnconfigure(5, weight=0)  # Date
         self.scrollable_frame.grid_columnconfigure(6, weight=0)  # Version
         self.scrollable_frame.grid_columnconfigure(7, weight=1)  # Signer
-        self.scrollable_frame.grid_columnconfigure(8, weight=2)  # Reason (Why superseded)
+        self.scrollable_frame.grid_columnconfigure(8, weight=2)  # Reason (Why kept / superseded)
 
         # 3. --- Buttons Area ---
         self.button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.button_frame.grid(row=2, column=0, pady=20, padx=20, sticky="ew")
+        self.button_frame.grid(row=3, column=0, pady=20, padx=20, sticky="ew")
 
         self.button_frame.grid_columnconfigure(0, weight=1)  # Spacer
 
@@ -74,6 +86,9 @@ class DriverDeletionApp(ctk.CTk):
     # Scanning
     # ----------------------------------------------------------------
 
+    def _on_toggle_show_all(self):
+        self.start_scan()
+
     def start_scan(self):
         """Kicks off a driver store scan on a background thread."""
         if self._busy:
@@ -81,15 +96,16 @@ class DriverDeletionApp(ctk.CTk):
         self._set_busy(True, "Scanning driver store...")
         self._clear_rows()
 
-        threading.Thread(target=self._scan_worker, daemon=True).start()
+        show_all = bool(self.show_all_var.get())
+        threading.Thread(target=self._scan_worker, args=(show_all,), daemon=True).start()
 
-    def _scan_worker(self):
+    def _scan_worker(self, show_all: bool):
         """Runs off the main thread: never touch widgets here directly."""
         scan_result = scan_driver_store()
-        duplicates = find_duplicate_drivers(scan_result.drivers) if not scan_result.error else []
-        self.after(0, lambda: self._on_scan_complete(duplicates, scan_result.error))
+        rows = build_driver_rows(scan_result.drivers, include_non_duplicates=show_all) if not scan_result.error else []
+        self.after(0, lambda: self._on_scan_complete(rows, scan_result.error, show_all))
 
-    def _on_scan_complete(self, duplicates: List[Dict[str, Any]], error):
+    def _on_scan_complete(self, rows: List[Dict[str, Any]], error, show_all: bool):
         """Runs on the main thread via `after()`; safe to touch widgets here."""
         self._set_busy(False)
 
@@ -98,11 +114,15 @@ class DriverDeletionApp(ctk.CTk):
             self._render_empty_state(f"Scan failed: {error}")
             return
 
-        self.duplicates = duplicates
-        if not duplicates:
-            self._render_empty_state("No duplicate or superseded driver packages found.")
+        self.rows = rows
+        if not rows:
+            message = (
+                "No drivers found." if show_all else
+                "No duplicate or superseded driver packages found."
+            )
+            self._render_empty_state(message)
         else:
-            self.populate_duplicates(duplicates)
+            self.populate_rows(rows)
 
     # ----------------------------------------------------------------
     # Table rendering
@@ -121,8 +141,13 @@ class DriverDeletionApp(ctk.CTk):
         label.grid(row=0, column=0, columnspan=_TABLE_COLUMNS, padx=10, pady=20)
         self._row_widgets.append(label)
 
-    def populate_duplicates(self, duplicates: List[Dict[str, Any]]):
-        """Draws the table rows for a list of duplicates from find_duplicate_drivers()."""
+    def populate_rows(self, rows: List[Dict[str, Any]]):
+        """
+        Draws the table rows from build_driver_rows(). Each group's kept
+        (newest) driver is rendered directly above the packages it
+        superseded, with a disabled, permanently-unchecked checkbox --
+        it's shown for context but is never selectable and never deleted.
+        """
         self._clear_rows()
 
         headers = [
@@ -140,34 +165,38 @@ class DriverDeletionApp(ctk.CTk):
             header.grid(row=0, column=col, padx=5, pady=5)
         self._row_widgets.extend(headers)
 
-        for i, dup in enumerate(duplicates):
+        for i, row in enumerate(rows):
             row_num = i + 1
-            inf = dup["target_inf"]
+            inf = row["target_inf"]
+            is_kept = row.get("is_kept", False)
 
-            var = ctk.BooleanVar(value=True)  # Default to checked
-            self.checkbox_vars[inf] = var
-
-            cb = ctk.CTkCheckBox(self.scrollable_frame, text="", variable=var, width=20)
+            if is_kept:
+                # The retained driver is shown for context, never for deletion:
+                # no BooleanVar, never added to checkbox_vars, disabled widget.
+                cb = ctk.CTkCheckBox(self.scrollable_frame, text="", width=20, state="disabled")
+                cb.deselect()
+            else:
+                var = ctk.BooleanVar(value=True)  # Default to checked
+                self.checkbox_vars[inf] = var
+                cb = ctk.CTkCheckBox(self.scrollable_frame, text="", variable=var, width=20)
             cb.grid(row=row_num, column=0, padx=5, pady=5)
+            self._row_widgets.append(cb)
 
-            # Reason is shown inline -- no click required to see why a
-            # package was flagged.
             cells = [
                 inf,
-                dup.get("provider", "Unknown"),
-                dup.get("class", "Unknown"),
-                dup.get("class_guid", "Unknown"),
-                dup.get("date", "Unknown"),
-                dup.get("version", "Unknown"),
-                dup.get("signer", "Unknown"),
-                dup.get("reason", ""),
+                row.get("provider", "Unknown"),
+                row.get("class", "Unknown"),
+                row.get("class_guid", "Unknown"),
+                row.get("date", "Unknown"),
+                row.get("version", "Unknown"),
+                row.get("signer", "Unknown"),
+                row.get("reason", ""),
             ]
+            label_kwargs = {"font": _KEPT_ROW_FONT} if is_kept else {}
             for col, text in enumerate(cells, start=1):
-                label = ctk.CTkLabel(self.scrollable_frame, text=text)
+                label = ctk.CTkLabel(self.scrollable_frame, text=text, **label_kwargs)
                 label.grid(row=row_num, column=col, padx=5, pady=5, sticky="w")
                 self._row_widgets.append(label)
-
-            self._row_widgets.append(cb)
 
     # ----------------------------------------------------------------
     # Deletion
@@ -219,6 +248,7 @@ class DriverDeletionApp(ctk.CTk):
     def _set_busy(self, busy: bool, status_text: str = ""):
         self._busy = busy
         self.approve_button.configure(state="disabled" if busy else "normal")
+        self.show_all_switch.configure(state="disabled" if busy else "normal")
         self.status_label.configure(text=status_text if busy else "")
 
 

@@ -10,6 +10,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from src.driver_parser import (
+    build_driver_rows,
     delete_driver,
     find_duplicate_drivers,
     get_installed_oem_drivers,
@@ -202,6 +203,60 @@ class TestFindDuplicateDrivers:
         # empty-string artifact that silently groups differently from a
         # driver where the field was absent entirely.
         assert blank_provider_drv.get("provider") is None
+
+
+# --------------------------------------------------------------------------
+# build_driver_rows: like find_duplicate_drivers, but also includes the
+# kept driver in each group (and optionally every non-duplicated driver).
+# --------------------------------------------------------------------------
+
+class TestBuildDriverRows:
+    def test_default_includes_kept_row_above_its_superseded_rows(self):
+        drivers = _mocked_drivers(SINGLE_DUPLICATE_OUTPUT)
+        rows = build_driver_rows(drivers)
+
+        assert [r["target_inf"] for r in rows] == ["oem4.inf", "oem3.inf"]
+        assert rows[0]["is_kept"] is True
+        assert rows[1]["is_kept"] is False
+
+    def test_default_omits_groups_with_no_duplicates(self):
+        drivers = _mocked_drivers(NO_DUPLICATES_OUTPUT)
+        rows = build_driver_rows(drivers)
+
+        assert rows == []
+
+    def test_include_non_duplicates_shows_every_driver(self):
+        drivers = _mocked_drivers(NO_DUPLICATES_OUTPUT)
+        rows = build_driver_rows(drivers, include_non_duplicates=True)
+
+        assert len(rows) == 3
+        assert all(r["is_kept"] for r in rows)
+        assert {r["target_inf"] for r in rows} == {"oem0.inf", "oem1.inf", "oem2.inf"}
+
+    def test_include_non_duplicates_still_groups_kept_above_superseded(self):
+        drivers = _mocked_drivers(MULTIPLE_SUPERSEDED_OUTPUT)
+        rows = build_driver_rows(drivers, include_non_duplicates=True)
+
+        nvidia_rows = [r for r in rows if r["provider"] == "NVIDIA"]
+        # Newest (oem7) first, then older versions descending by date.
+        assert [r["target_inf"] for r in nvidia_rows] == ["oem7.inf", "oem6.inf", "oem5.inf"]
+        assert nvidia_rows[0]["is_kept"] is True
+        assert all(not r["is_kept"] for r in nvidia_rows[1:])
+
+    def test_kept_row_reason_differs_with_and_without_duplicates(self):
+        with_dups = build_driver_rows(_mocked_drivers(SINGLE_DUPLICATE_OUTPUT))
+        without_dups = build_driver_rows(_mocked_drivers(NO_DUPLICATES_OUTPUT), include_non_duplicates=True)
+
+        assert "superseded" in with_dups[0]["reason"].lower()
+        assert "no duplicate" in without_dups[0]["reason"].lower()
+
+    def test_find_duplicate_drivers_matches_non_kept_rows_from_build_driver_rows(self):
+        drivers = _mocked_drivers(MULTIPLE_SUPERSEDED_OUTPUT)
+
+        via_find = find_duplicate_drivers(drivers)
+        via_rows = [r for r in build_driver_rows(drivers) if not r["is_kept"]]
+
+        assert via_find == via_rows
 
 
 # --------------------------------------------------------------------------

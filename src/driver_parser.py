@@ -233,13 +233,8 @@ def _sort_key(drv: Dict[str, Any]) -> Tuple[datetime, Tuple[int, ...]]:
     return (drv.get("date", datetime.min), _parse_version_tuple(drv.get("version_str")))
 
 
-def find_duplicate_drivers(drivers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Groups drivers by (Provider, Device Class, Original Name) and flags every
-    package but the newest in each group as superseded. "Newest" is decided
-    by driver date first, then driver version as a tiebreaker (or as the
-    sole signal when the date is missing/malformed on tied entries).
-    """
+def _group_drivers(drivers: List[Dict[str, Any]]) -> Dict[Tuple[str, str, str], List[Dict[str, Any]]]:
+    """Groups drivers by (Provider, Device Class, Original Name)."""
     grouped: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
 
     for drv in drivers:
@@ -250,36 +245,81 @@ def find_duplicate_drivers(drivers: List[Dict[str, Any]]) -> List[Dict[str, Any]
         group_key = (provider, dev_class, orig_name)
         grouped.setdefault(group_key, []).append(drv)
 
-    duplicates: List[Dict[str, Any]] = []
+    return grouped
 
-    for pkg_list in grouped.values():
-        if len(pkg_list) <= 1:
+
+def _build_row(drv: Dict[str, Any], is_kept: bool, kept: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    return {
+        "target_inf": drv.get("published_name", "Unknown"),
+        "original_name": drv.get("original_name", "N/A"),
+        "provider": drv.get("provider", "Unknown"),
+        "class": drv.get("class", "Unknown"),
+        "class_guid": drv.get("class_guid", "Unknown"),
+        "signer": drv.get("signer", "Unknown"),
+        "version": drv.get("version_str", "Unknown"),
+        "date": drv.get("date_str", "Unknown"),
+        "is_kept": is_kept,
+        "kept_inf": kept.get("published_name", "Unknown"),
+        "kept_version": kept.get("version_str", "Unknown"),
+        "reason": reason,
+    }
+
+
+def build_driver_rows(drivers: List[Dict[str, Any]], include_non_duplicates: bool = False) -> List[Dict[str, Any]]:
+    """
+    Groups drivers the same way `find_duplicate_drivers` does, but returns a
+    row for EVERY member of each group -- the newest ("kept") driver first,
+    followed by any older superseded drivers -- instead of only the
+    superseded ones. Each row is tagged `is_kept` so a caller (e.g. the GUI)
+    can render the kept driver as a non-deletable reference row directly
+    above the packages it superseded, and never offer it up for selection.
+
+    By default (`include_non_duplicates=False`) groups with nothing
+    superseded are omitted entirely, matching the original "duplicates
+    only" view. Pass `include_non_duplicates=True` for a full inventory of
+    every installed driver, kept or not (the "show all drivers" view).
+    """
+    rows: List[Dict[str, Any]] = []
+
+    for pkg_list in _group_drivers(drivers).values():
+        pkg_list = sorted(pkg_list, key=_sort_key, reverse=True)
+        newest, older_versions = pkg_list[0], pkg_list[1:]
+
+        if not older_versions and not include_non_duplicates:
             continue
 
-        pkg_list.sort(key=_sort_key, reverse=True)
-
-        newest = pkg_list[0]
-        older_versions = pkg_list[1:]
+        rows.append(_build_row(
+            newest, is_kept=True, kept=newest,
+            reason=(
+                "Newest version in this group; superseded packages listed below."
+                if older_versions else
+                "No duplicate or superseded versions found for this package."
+            ),
+        ))
 
         for superseded in older_versions:
-            duplicates.append({
-                "target_inf": superseded["published_name"],
-                "original_name": superseded.get("original_name", "N/A"),
-                "provider": superseded.get("provider", "Unknown"),
-                "class": superseded.get("class", "Unknown"),
-                "class_guid": superseded.get("class_guid", "Unknown"),
-                "signer": superseded.get("signer", "Unknown"),
-                "version": superseded.get("version_str", "Unknown"),
-                "date": superseded.get("date_str", "Unknown"),
-                "kept_version": newest.get("version_str", "Unknown"),
-                "kept_inf": newest["published_name"],
-                "reason": (
+            rows.append(_build_row(
+                superseded, is_kept=False, kept=newest,
+                reason=(
                     f"Superseded by {newest['published_name']} "
                     f"(v{newest.get('version_str', 'Unknown')} - {newest.get('date_str', 'Unknown')})"
                 ),
-            })
+            ))
 
-    return duplicates
+    return rows
+
+
+def find_duplicate_drivers(drivers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Groups drivers by (Provider, Device Class, Original Name) and flags every
+    package but the newest in each group as superseded. "Newest" is decided
+    by driver date first, then driver version as a tiebreaker (or as the
+    sole signal when the date is missing/malformed on tied entries).
+
+    Returns only the superseded (deletable) rows. See `build_driver_rows`
+    for a version that also includes the kept driver in each group.
+    """
+    return [row for row in build_driver_rows(drivers, include_non_duplicates=False) if not row["is_kept"]]
 
 
 if __name__ == "__main__":
