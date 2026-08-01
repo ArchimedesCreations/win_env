@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(wsl -e bash -lc 'export PATH=$HOME/.local/bin:$PATH; cd ~/projects/win_env && git commit -m \"Show kept driver above its superseded rows; add show-all-drivers toggle\" && git push 2>&1')"
+      "PowerShell(wsl -e bash -lc 'export PATH=$HOME/.local/bin:$PATH; cd ~/projects/win_env && git commit -m \"Show kept driver above its superseded rows; add show-all-drivers toggle\" && git push 2>&1')",
+      "PowerShell(wsl -e bash -lc 'export PATH=$HOME/.local/bin:$PATH; gh api repos/ArchimedesCreations/win_env/collaborators/KenLewen/permission 2>&1; echo ---; gh api user --jq .login; echo ---; gh api orgs/ArchimedesCreations/memberships/KenLewen 2>&1')"
     ]
   }
 }
