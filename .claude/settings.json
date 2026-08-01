@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(wsl -e bash -lc 'export PATH=$HOME/.local/bin:$PATH; cd ~/projects/win_env && git commit -m \"Show kept driver above its superseded rows; add show-all-drivers toggle\" && git push 2>&1')"
+    ]
+  }
+}
